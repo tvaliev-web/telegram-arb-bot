@@ -1,80 +1,72 @@
 import axios from "axios";
 
-const BOT_TOKEN = process.env.BOT_TOKEN;
-const CHAT_ID = process.env.CHAT_ID;
+const TG_TOKEN = process.env.TG_TOKEN;       // telegram bot token
+const TG_CHAT_ID = process.env.TG_CHAT_ID;   // your chat id
 
-const PROFIT_MIN = 1.5; // %
+// -------- CONFIG --------
+const CHECK_INTERVAL_MS = 15_000; // 15 sec
+const MIN_PROFIT = 1.5; // %
+
 let lastProfit = 0;
 
-// === helpers ===
-async function send(text) {
-  await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
-    chat_id: CHAT_ID,
-    text
+// -------- TELEGRAM --------
+async function sendTG(text) {
+  const url = `https://api.telegram.org/bot${TG_TOKEN}/sendMessage`;
+  await axios.post(url, {
+    chat_id: TG_CHAT_ID,
+    text,
+    disable_web_page_preview: true,
   });
 }
 
-// === BUY price (LINK) ===
-// CoinGecko – стабильно, без лимитов, без 404
-async function getBuyPrice() {
-  const r = await axios.get(
-    "https://api.coingecko.com/api/v3/simple/price",
-    {
-      params: {
-        ids: "chainlink",
-        vs_currencies: "usd"
-      }
-    }
+// -------- PRICE SOURCES (NO RPC, NO ONCHAIN, NO 429) --------
+// Sushi price via DexScreener
+async function getSushiPrice() {
+  const res = await axios.get(
+    "https://api.dexscreener.com/latest/dex/pairs/polygon/0xc35dadb65012ec5796536bd9864ed8773abc74c4"
   );
-
-  return r.data.chainlink.usd;
+  return Number(res.data.pair.priceUsd);
 }
 
-// === SELL price (Odos) ===
-async function getSellPrice() {
-  const r = await axios.post("https://api.odos.xyz/sor/quote/v2", {
-    chainId: 137,
-    inputTokens: [
-      {
-        tokenAddress: "0x53e0bca35ec356bd5dddfebbd1fc0fd03fabad39", // LINK
-        amount: "1000000000000000000" // 1 LINK
-      }
-    ],
-    outputTokens: [
-      {
-        tokenAddress: "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174", // USDC
-        proportion: 1
-      }
-    ],
-    slippageLimitPercent: 0.5,
-    userAddr: "0x0000000000000000000000000000000000000000"
-  });
-
-  return Number(r.data.outAmounts[0]) / 1e6;
+// Odos quote (API, NOT contract)
+async function getOdosPrice() {
+  const res = await axios.get(
+    "https://api.odos.xyz/pricing/token/0x53e0bca35ec356bd5dddfebbd1fc0fd03fabad39"
+  );
+  return Number(res.data.priceUsd);
 }
 
-// === MAIN ===
+// -------- MAIN LOOP --------
 async function check() {
   try {
-    const buy = await getBuyPrice();
-    const sell = await getSellPrice();
+    const buy = await getSushiPrice();
+    const sell = await getOdosPrice();
 
     const profit = ((sell - buy) / buy) * 100;
 
-    if (profit >= PROFIT_MIN && profit > lastProfit + 0.1) {
-      lastProfit = profit;
+    console.log(
+      `BUY: ${buy.toFixed(4)} | SELL: ${sell.toFixed(4)} | PROFIT: ${profit.toFixed(2)}%`
+    );
 
-      await send(
-        `LINK ARB\nBuy: $${buy.toFixed(4)}\nSell: $${sell.toFixed(4)}\nProfit: ${profit.toFixed(2)}%`
+    if (profit >= MIN_PROFIT && profit > lastProfit) {
+      await sendTG(
+        `🚨 ARB SIGNAL\n\nBuy (Sushi): $${buy}\nSell (Odos): $${sell}\nProfit: ${profit.toFixed(
+          2
+        )}%`
       );
+      lastProfit = profit;
     }
 
-    if (profit < PROFIT_MIN) lastProfit = 0;
-
+    if (profit < 0) lastProfit = 0;
   } catch (e) {
-    console.log("Price check error:", e.message);
+    console.error("PRICE CHECK ERROR FULL:");
+    console.error(e?.response?.status);
+    console.error(e?.response?.data || e.message);
+    process.exit(1);
   }
 }
 
-setInterval(check, 60_000);
-send("Bot started");
+(async () => {
+  await sendTG("✅ Bot started and running");
+  setInterval(check, CHECK_INTERVAL_MS);
+})();
