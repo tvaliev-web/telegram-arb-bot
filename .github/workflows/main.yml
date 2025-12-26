@@ -3,11 +3,13 @@ name: Link Bot
 on:
   workflow_dispatch:
   schedule:
-    - cron: "*/10 * * * *"
+    - cron: "*/5 * * * *"   # каждые 5 минут
 
 jobs:
   run:
     runs-on: ubuntu-latest
+    timeout-minutes: 2
+
     steps:
       - uses: actions/checkout@v4
 
@@ -20,7 +22,7 @@ jobs:
 
       - name: Run bot
         env:
-          TG_TOKEN: ${{ secrets.TG_TOKEN }}
-          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
           RPC_URL: ${{ secrets.RPC_URL }}
         run: node bot.js
