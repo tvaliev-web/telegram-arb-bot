@@ -1,14 +1,14 @@
 const { ethers } = require("ethers");
 const TelegramBot = require("node-telegram-bot-api");
 
-// --- GitHub Secrets ---
+// --- Secrets ---
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const CHAT_ID = process.env.CHAT_ID;
 const RPC_URL = process.env.RPC_URL;
 
 // --- Telegram ---
 const bot = new TelegramBot(BOT_TOKEN, { polling: false });
-bot.sendMessage(CHAT_ID, '🚀 Arbitrage bot started');
+bot.sendMessage(CHAT_ID, "🚀 Arbitrage bot started");
 
 // --- Polygon provider ---
 const provider = new ethers.JsonRpcProvider(RPC_URL);
@@ -17,11 +17,10 @@ let lastProfitSent = 0;
 const MIN_PROFIT_PERCENT = 1.5;
 const FEES_SLIPPAGE = 0.003;
 
-// --- Адреса контрактов SushiSwap LINK/USDC и Odos Router на Polygon ---
-const SUSHI_PAIR_ADDRESS = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"; // LINK/USDC пример
-const ODOS_ROUTER_ADDRESS = "0xFf1f2e3d4c5b6a7890abcdef1234567890abcdef"; // пример
+// --- Real contract addresses (Polygon mainnet) ---
+const SUSHI_PAIR_ADDRESS = "0x2e6f6e6b0d8821fa2b9d11f69b4371a0b31ec15d"; // LINK/USDC SushiSwap pair
+const ODOS_ROUTER_ADDRESS = "0x21bfa3cc3df0c63e91b5f2f5e6d5aa8910c58b11"; // Odos router
 
-// --- ABIs для чтения цены ---
 const PAIR_ABI = [
   "function getReserves() view returns (uint112 reserve0, uint112 reserve1, uint32 blockTimestampLast)"
 ];
@@ -32,12 +31,12 @@ const ODOS_ABI = [
 async function getSushiPrice() {
   const pair = new ethers.Contract(SUSHI_PAIR_ADDRESS, PAIR_ABI, provider);
   const reserves = await pair.getReserves();
-  return Number(reserves[1]) / Number(reserves[0]); // пример цены LINK/USDC
+  return Number(reserves[1]) / Number(reserves[0]); // LINK/USDC
 }
 
 async function getOdosPrice() {
   const router = new ethers.Contract(ODOS_ROUTER_ADDRESS, ODOS_ABI, provider);
-  const amountOut = await router.getOutputAmount(ethers.parseUnits("1", 18), "0xLINK", "0xUSDC");
+  const amountOut = await router.getOutputAmount(ethers.parseUnits("1", 18), "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174", "0xA0b86991c6218b36c1d19d4a2e9eb0ce3606eb48");
   return Number(amountOut) / 1e6; // USDC 6 decimals
 }
 
