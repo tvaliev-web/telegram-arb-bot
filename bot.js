@@ -1,61 +1,62 @@
-const { ethers } = require("ethers");
-const TelegramBot = require("node-telegram-bot-api");
+import axios from "axios";
 
-// --- Secrets ---
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const CHAT_ID = process.env.CHAT_ID;
-const RPC_URL = process.env.RPC_URL;
 
-// --- Telegram ---
-const bot = new TelegramBot(BOT_TOKEN, { polling: false });
-bot.sendMessage(CHAT_ID, "🚀 Arbitrage bot started");
+const LINK = "0x53e0bca35ec356bd5dddfebbd1fc0fd03fabad39";
+const USDC = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174";
 
-// --- Polygon provider ---
-const provider = new ethers.JsonRpcProvider(RPC_URL);
+const PROFIT_THRESHOLD = 1.5;
+let lastProfit = 0;
 
-let lastProfitSent = 0;
-const MIN_PROFIT_PERCENT = 1.5;
-const FEES_SLIPPAGE = 0.003;
-
-// --- Проверенный контракт LINK/USDC SushiSwap на Polygon ---
-const SUSHI_PAIR_ADDRESS = "0x27c9e8a8c49e4e08a9e2f7d8e97d8f0e173a18d3"; 
-const PAIR_ABI = [
-  "function getReserves() view returns (uint112 reserve0, uint112 reserve1, uint32 blockTimestampLast)"
-];
+async function send(msg) {
+  await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+    chat_id: CHAT_ID,
+    text: msg
+  });
+}
 
 async function getSushiPrice() {
-  try {
-    const pair = new ethers.Contract(SUSHI_PAIR_ADDRESS, PAIR_ABI, provider);
-    const reserves = await pair.getReserves();
-    // reserve0 = LINK, reserve1 = USDC
-    const reserve0 = Number(reserves[0]);
-    const reserve1 = Number(reserves[1]);
-    if (reserve0 === 0 || reserve1 === 0) throw new Error("Invalid reserves");
-    return reserve1 / reserve0;
-  } catch (err) {
-    console.error("Sushi price error:", err.message);
-    return null;
-  }
+  const r = await axios.get(
+    `https://api.sushi.com/price/v1/chain/137/token/${LINK}`
+  );
+  return r.data.price;
 }
 
-async function checkArb() {
-  const sushiPrice = await getSushiPrice();
-  if (!sushiPrice) return;
+async function getOdosQuote() {
+  const r = await axios.post("https://api.odos.xyz/sor/quote/v2", {
+    chainId: 137,
+    inputTokens: [{ tokenAddress: LINK, amount: "1000000000000000000" }],
+    outputTokens: [{ tokenAddress: USDC, proportion: 1 }],
+    userAddr: "0x0000000000000000000000000000000000000000",
+    slippageLimitPercent: 0.5
+  });
 
-  // Псевдо Odos price: добавим 0.5% спред
-  const odosPrice = sushiPrice * 1.005;
-  const netProfitPercent = ((odosPrice / sushiPrice - 1) - FEES_SLIPPAGE) * 100;
-
-  if (netProfitPercent >= MIN_PROFIT_PERCENT && netProfitPercent > lastProfitSent) {
-    bot.sendMessage(
-      CHAT_ID,
-      `🚨 Arbitrage opportunity!\nBuy Sushi: ${sushiPrice.toFixed(6)}\nSell Odos: ${odosPrice.toFixed(6)}\nNet profit: ${netProfitPercent.toFixed(2)}%`
-    );
-    lastProfitSent = netProfitPercent;
-  } else if (netProfitPercent < MIN_PROFIT_PERCENT) {
-    lastProfitSent = 0;
-  }
+  return Number(r.data.outAmounts[0]) / 1e6;
 }
 
-// Проверка каждую минуту
-setInterval(checkArb, 60 * 1000);
+async function check() {
+  try {
+    const buy = await getSushiPrice();
+    const sell = await getOdosQuote();
+
+    const profit = ((sell - buy) / buy) * 100;
+
+    if (profit >= PROFIT_THRESHOLD && profit > lastProfit + 0.1) {
+      lastProfit = profit;
+      await send(
+        `LINK ARB\nBuy (Sushi): $${buy.toFixed(4)}\nSell (Odos): $${sell.toFixed(4)}\nProfit: ${profit.toFixed(2)}%`
+      );
+    }
+
+    if (profit < PROFIT_THRESHOLD) {
+      lastProfit = 0;
+    }
+
+  } catch (e) {
+    console.log("Price check error:", e.message);
+  }
+}
+
+setInterval(check, 60_000);
+send("Bot started");
