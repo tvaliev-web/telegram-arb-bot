@@ -1,66 +1,58 @@
-const { ethers } = require("ethers");
-const TelegramBot = require("node-telegram-bot-api");
+import { Token, Fetcher, Route, ChainId } from '@sushiswap/sdk';
+import { ethers } from 'ethers';
+import axios from 'axios';
+import TelegramBot from 'node-telegram-bot-api';
 
-// --- Secrets ---
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const CHAT_ID = process.env.CHAT_ID;
 const RPC_URL = process.env.RPC_URL;
 
-// --- Telegram ---
 const bot = new TelegramBot(BOT_TOKEN, { polling: false });
-bot.sendMessage(CHAT_ID, "🚀 Arbitrage bot started");
+bot.sendMessage(CHAT_ID, '🚀 Arbitrage bot started');
 
-// --- Polygon provider ---
 const provider = new ethers.JsonRpcProvider(RPC_URL);
-
-// --- Адреса контрактов SushiSwap и Odos (пример) ---
-const SUSHI_PAIR_ADDRESS = "0x..."; // замените на реальный адрес пары LINK/USDC на Polygon
-const ODOS_ROUTER_ADDRESS = "0x..."; // замените на реальный адрес Odos Router
-
-// --- ABIs для вызова getReserves или price ---
-const SUSHI_PAIR_ABI = [
-  "function getReserves() view returns (uint112 reserve0, uint112 reserve1, uint32 blockTimestampLast)"
-];
-const ODOS_ROUTER_ABI = [
-  "function getOutputAmount(uint256 amountIn, address tokenIn, address tokenOut) view returns (uint256)"
-];
 
 let lastProfitSent = 0;
 const MIN_PROFIT_PERCENT = 1.5;
 const FEES_SLIPPAGE = 0.003;
 
+// SushiSwap LINK/USDC on Polygon
+const LINK = new Token(ChainId.POLYGON, '0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174', 18);
+const USDC = new Token(ChainId.POLYGON, '0xA0b86991c6218b36c1d19d4a2e9eb0ce3606eb48', 6);
+
 async function getSushiPrice() {
-  const pair = new ethers.Contract(SUSHI_PAIR_ADDRESS, SUSHI_PAIR_ABI, provider);
-  const reserves = await pair.getReserves();
-  return Number(reserves[1]) / Number(reserves[0]); // пример расчета цены LINK/USDC
+  const pair = await Fetcher.fetchPairData(LINK, USDC, provider);
+  const route = new Route([pair], USDC);
+  return parseFloat(route.midPrice.toSignificant(6));
 }
 
 async function getOdosPrice() {
-  const router = new ethers.Contract(ODOS_ROUTER_ADDRESS, ODOS_ROUTER_ABI, provider);
-  const amountOut = await router.getOutputAmount(ethers.parseUnits("1", 18), "0xLINK", "0xUSDC");
-  return Number(amountOut) / 1e6; // USDC 6 decimals
+  const res = await axios.get(
+    'https://api.odos.xyz/v1/price?from=LINK&to=USDC&amount=1&chain=polygon'
+  );
+  return parseFloat(res.data.amountOut);
 }
 
 async function checkArb() {
-  try {
-    const sushiPrice = await getSushiPrice();
-    const odosPrice = await getOdosPrice();
+  try {
+    const sushiPrice = await getSushiPrice();
+    const odosPrice = await getOdosPrice();
 
-    const netProfitPercent = ((odosPrice / sushiPrice - 1) - FEES_SLIPPAGE) * 100;
+    const netProfitPercent = ((odosPrice / sushiPrice - 1) - FEES_SLIPPAGE) * 100;
 
-    if (netProfitPercent >= MIN_PROFIT_PERCENT && netProfitPercent > lastProfitSent) {
-      bot.sendMessage(
-        CHAT_ID,
-        `🚨 Arbitrage opportunity!\nBuy Sushi: ${sushiPrice}\nSell Odos: ${odosPrice}\nNet profit: ${netProfitPercent.toFixed(2)}%`
-      );
-      lastProfitSent = netProfitPercent;
-    } else if (netProfitPercent < MIN_PROFIT_PERCENT) {
-      lastProfitSent = 0;
-    }
-
-  } catch (err) {
-    console.error("Price check error:", err.message);
-  }
+    if (netProfitPercent >= MIN_PROFIT_PERCENT && netProfitPercent > lastProfitSent) {
+      bot.sendMessage(
+        CHAT_ID,
+        `🚨 Arbitrage opportunity!\nBuy Sushi: ${sushiPrice}\nSell Odos: ${odosPrice}\nNet profit: ${netProfitPercent.toFixed(2)}%`
+      );
+      lastProfitSent = netProfitPercent;
+    } else if (netProfitPercent < MIN_PROFIT_PERCENT) {
+      lastProfitSent = 0;
+    }
+  } catch (err) {
+    console.error('Price check error:', err.message);
+  }
 }
 
+// Проверка каждую минуту
 setInterval(checkArb, 60 * 1000);
