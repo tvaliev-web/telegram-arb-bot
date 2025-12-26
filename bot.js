@@ -5,20 +5,13 @@ const TG_TOKEN = (process.env.TG_TOKEN || "").trim();
 const TG_CHAT_ID = (process.env.TG_CHAT_ID || "").trim();
 const RPC_URL = (process.env.RPC_URL || "").trim();
 
-function must(v, name) {
-  if (!v) throw new Error(`${name} is missing`);
-  return v;
-}
-
 async function tgSend(text) {
   const url = `https://api.telegram.org/bot${TG_TOKEN}/sendMessage`;
   const res = await axios.post(url, { chat_id: TG_CHAT_ID, text });
-  if (!res?.data?.ok) throw new Error(`Telegram error: ${JSON.stringify(res.data)}`);
-  return res.data;
+  if (!res?.data?.ok) throw new Error(`Telegram: ${JSON.stringify(res.data)}`);
 }
 
-// Sushi LINK/USDC pair on Polygon
-const PAIR = "0xc35dadb65012ec5796536bd9864ed8773abc7404";
+const PAIR = "0xc35dadb65012ec5796536bd9864ed8773abc7404"; // Sushi LINK/USDC on Polygon
 const USDC = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174".toLowerCase();
 const ABI = [
   "function getReserves() view returns (uint112 reserve0, uint112 reserve1, uint32)",
@@ -34,36 +27,28 @@ async function getSushiLinkUsd() {
   const t0 = (await pair.token0()).toLowerCase();
   const t1 = (await pair.token1()).toLowerCase();
 
-  // reserves are raw integers; convert to float carefully:
-  // USDC has 6 decimals, LINK has 18 decimals.
-  // price = USDC per 1 LINK
   let usdcRaw, linkRaw;
-  if (t0 === USDC) {
-    usdcRaw = r0;
-    linkRaw = r1;
-  } else if (t1 === USDC) {
-    usdcRaw = r1;
-    linkRaw = r0;
-  } else {
-    throw new Error("Pair is not USDC/LINK");
-  }
+  if (t0 === USDC) { usdcRaw = r0; linkRaw = r1; }
+  else if (t1 === USDC) { usdcRaw = r1; linkRaw = r0; }
+  else throw new Error("Not USDC/LINK pair");
 
   const usdc = Number(usdcRaw) / 1e6;
   const link = Number(linkRaw) / 1e18;
-  if (!usdc || !link) throw new Error("Zero reserves");
+  if (usdc === 0 || link === 0) throw new Error("Zero reserves");
+
   return usdc / link;
 }
 
 (async () => {
   try {
-    must(TG_TOKEN, "TG_TOKEN");
-    must(TG_CHAT_ID, "TG_CHAT_ID");
-    must(RPC_URL, "RPC_URL");
+    if (!TG_TOKEN) throw new Error("TG_TOKEN missing");
+    if (!TG_CHAT_ID) throw new Error("TG_CHAT_ID missing");
+    if (!RPC_URL) throw new Error("RPC_URL missing");
 
     await tgSend("BOT STARTED ✅");
 
     const price = await getSushiLinkUsd();
-    await tgSend(`Sushi LINK price (Polygon): $${price.toFixed(4)}`);
+    await tgSend(`Sushi LINK (Polygon): $${price.toFixed(4)}`);
 
     console.log("OK");
   } catch (e) {
