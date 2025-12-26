@@ -1,15 +1,12 @@
 {
   "name": "link-arb-bot",
   "version": "1.0.0",
-  "description": "Telegram arbitrage bot for LINK on Polygon",
+  "type": "module",
   "main": "bot.js",
   "scripts": {
     "start": "node bot.js"
   },
   "dependencies": {
-    "ethers": "^6.16.0",
-    "node-telegram-bot-api": "^0.61.0"
-  },
-  "author": "",
-  "license": "MIT"
+    "axios": "^1.6.8"
+  }
 }
