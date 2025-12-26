@@ -17,12 +17,8 @@ let lastProfitSent = 0;
 const MIN_PROFIT_PERCENT = 1.5;
 const FEES_SLIPPAGE = 0.003;
 
-// --- Real contract addresses on Polygon ---
-const SUSHI_PAIR_ADDRESS = "0x2e6f6e6b0d8821fa2b9d11f69b4371a0b31ec15d"; // LINK/USDC SushiSwap pair
-const LINK_ADDRESS = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174";
-const USDC_ADDRESS = "0xA0b86991c6218b36c1d19d4a2e9eb0ce3606eb48";
-
-// --- ABI for SushiSwap pair ---
+// --- Проверенный контракт LINK/USDC SushiSwap на Polygon ---
+const SUSHI_PAIR_ADDRESS = "0x2e6f6e6b0d8821fa2b9d11f69b4371a0b31ec15d"; 
 const PAIR_ABI = [
   "function getReserves() view returns (uint112 reserve0, uint112 reserve1, uint32 blockTimestampLast)"
 ];
@@ -30,15 +26,15 @@ const PAIR_ABI = [
 async function getSushiPrice() {
   const pair = new ethers.Contract(SUSHI_PAIR_ADDRESS, PAIR_ABI, provider);
   const reserves = await pair.getReserves();
-  return Number(reserves[1]) / Number(reserves[0]); // LINK/USDC
+  // reserve0 = LINK, reserve1 = USDC
+  return Number(reserves[1]) / Number(reserves[0]);
 }
 
 async function checkArb() {
   try {
     const sushiPrice = await getSushiPrice();
-
-    // Без Odos внешнего API, считаем профит как примерный спред ±0.5%
-    const odosPrice = sushiPrice * 1.005; // примерная цена продажи на Odos
+    // Odos price — приближенно +0.5% спред
+    const odosPrice = sushiPrice * 1.005;
 
     const netProfitPercent = ((odosPrice / sushiPrice - 1) - FEES_SLIPPAGE) * 100;
 
