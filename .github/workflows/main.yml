@@ -1,31 +1,29 @@
-name: LINK Arb Bot
+name: Link Arbitrage Bot
 
 on:
+  workflow_dispatch:       # allows manual run
   schedule:
-    - cron: '*/5 * * * *' # проверка каждые 5 минут
-  push:
-    branches:
-      - main
+    - cron: '*/5 * * * *' # runs every 5 minutes
 
 jobs:
   run-bot:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
+      - name: Checkout code
         uses: actions/checkout@v3
 
       - name: Setup Node.js
         uses: actions/setup-node@v3
         with:
-          node-version: '20'
+          node-version: 20
 
       - name: Install dependencies
         run: npm install
 
       - name: Run bot
         env:
-          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
-          CHAT_ID: ${{ secrets.CHAT_ID }}
+          TG_TOKEN: ${{ secrets.TG_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
           RPC_URL: ${{ secrets.RPC_URL }}
-        run: npm start
+        run: node bot.js
