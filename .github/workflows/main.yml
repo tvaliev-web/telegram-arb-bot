@@ -11,6 +11,7 @@ permissions:
 jobs:
   run:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -21,7 +22,8 @@ jobs:
           node-version: 20
 
       - name: Install deps
-        run: npm install
+        run: |
+          npm install
 
       - name: Run bot
         env:
@@ -33,7 +35,8 @@ jobs:
           COOLDOWN_SEC: "600"
           BIG_JUMP_BYPASS: "1.0"
           MIN_SECONDS_BETWEEN_ANY: "60"
-        run: node bot.js
+        run: |
+          node bot.js
 
       - name: Commit state.json if changed
         run: |
