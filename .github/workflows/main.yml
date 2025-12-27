@@ -3,7 +3,7 @@ name: Link Arb Bot
 on:
   workflow_dispatch: {}
   schedule:
-    - cron: "*/10 * * * *"  # раз в 10 минут
+    - cron: "*/10 * * * *"
 
 permissions:
   contents: write
@@ -17,7 +17,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
-          cache: "npm"
 
       - name: Install deps
         run: npm install
@@ -33,7 +32,6 @@ jobs:
 
       - name: Commit state.json only if changed
         run: |
-          git status --porcelain
           if git diff --quiet -- state.json; then
             echo "state.json not changed"
             exit 0
