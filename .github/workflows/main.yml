@@ -2,20 +2,27 @@ name: Link Bot
 
 on:
   workflow_dispatch:
+    inputs:
+      startup_message:
+        description: "Send BOT STARTED message"
+        required: true
+        default: "true"
   schedule:
-    - cron: "*/5 * * * *"   # каждые 5 минут
+    - cron: "*/10 * * * *"   # каждые 10 минут (можешь поменять)
+
+concurrency:
+  group: link-bot
+  cancel-in-progress: true
 
 jobs:
   run:
     runs-on: ubuntu-latest
-    timeout-minutes: 2
-
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: "20"
 
       - name: Install deps
         run: npm install
@@ -25,4 +32,13 @@ jobs:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
           RPC_URL: ${{ secrets.RPC_URL }}
+
+          # настройки
+          MIN_PROFIT_PCT: "1.5"
+          SUSHI_FEE_BPS: "30"
+          SLIPPAGE_BPS: "50"
+          GAS_BPS: "0"
+
+          # Только на manual run — шлём “BOT STARTED”
+          STARTUP_MESSAGE: ${{ github.event_name == 'workflow_dispatch' && inputs.startup_message == 'true' && '1' || '0' }}
         run: node bot.js
