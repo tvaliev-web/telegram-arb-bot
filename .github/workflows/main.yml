@@ -2,13 +2,8 @@ name: Link Bot
 
 on:
   workflow_dispatch:
-    inputs:
-      startup_message:
-        description: "Send BOT STARTED message"
-        required: true
-        default: "true"
   schedule:
-    - cron: "*/10 * * * *"   # каждые 10 минут (можешь поменять)
+    - cron: "*/10 * * * *"   # каждые 10 минут (не 7)
 
 concurrency:
   group: link-bot
@@ -24,6 +19,15 @@ jobs:
         with:
           node-version: "20"
 
+      # кеш state.json чтобы помнить последний алерт и не спамить
+      - name: Restore state cache
+        uses: actions/cache@v4
+        with:
+          path: state.json
+          key: state-${{ github.repository }}-${{ github.ref_name }}
+          restore-keys: |
+            state-${{ github.repository }}-
+
       - name: Install deps
         run: npm install
 
@@ -32,13 +36,14 @@ jobs:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
           RPC_URL: ${{ secrets.RPC_URL }}
-
-          # настройки
-          MIN_PROFIT_PCT: "1.5"
-          SUSHI_FEE_BPS: "30"
-          SLIPPAGE_BPS: "50"
-          GAS_BPS: "0"
-
-          # Только на manual run — шлём “BOT STARTED”
-          STARTUP_MESSAGE: ${{ github.event_name == 'workflow_dispatch' && inputs.startup_message == 'true' && '1' || '0' }}
+          ODOS_API_KEY: ${{ secrets.ODOS_API_KEY }}
+          THRESHOLD_PCT: "1.0"
+          MIN_ALERT_GAP_MIN: "30"
+          RUN_MODE: ${{ github.event_name == 'workflow_dispatch' && 'manual' || 'cron' }}
         run: node bot.js
+
+      - name: Save state cache
+        uses: actions/cache@v4
+        with:
+          path: state.json
+          key: state-${{ github.repository }}-${{ github.ref_name }}
