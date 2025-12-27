@@ -1,204 +1,150 @@
-import axios from "axios";
-import crypto from "crypto";
-import { ethers } from "ethers";
 import fs from "fs";
+import axios from "axios";
+import { ethers } from "ethers";
+
+// ===== Polygon addresses =====
+const LINK = "0x53e0bca35ec356bd5dddfebbd1fc0fd03fabad39";
+const USDC = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174";
+const SUSHI_PAIR = "0x8bC8e9F621EE8bAbda8DC0E6Fc991aAf9BF8510b";
+
+const sushiSwapUrl = `https://www.sushi.com/swap?chainId=137&token0=${LINK}&token1=${USDC}`;
+const odosSwapUrl  = `https://app.odos.xyz/?chain=polygon&from=${LINK}&to=${USDC}`;
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const CHAT_ID = process.env.CHAT_ID;
 const RPC_URL = process.env.RPC_URL;
-const ODOS_API_KEY = process.env.ODOS_API_KEY || "";
 
-const THRESHOLD_PCT = Number(process.env.THRESHOLD_PCT || "1.0");     // алерт если profit >=
-const MIN_ALERT_GAP_MIN = Number(process.env.MIN_ALERT_GAP_MIN || "30"); // минимум минут между одинаковыми алертами
-const RUN_MODE = process.env.RUN_MODE || "cron"; // cron | manual
+const PROFIT_THRESHOLD = Number(process.env.PROFIT_THRESHOLD ?? "1.0"); // 1%
+const COOLDOWN_MINUTES = Number(process.env.COOLDOWN_MINUTES ?? "60");
+const MIN_CHANGE_PCT = Number(process.env.MIN_CHANGE_PCT ?? "0.25");
+const EVENT_NAME = process.env.EVENT_NAME; // workflow_dispatch / schedule
 
-// Polygon
-const CHAIN_ID = 137;
+if (!BOT_TOKEN || !CHAT_ID || !RPC_URL) process.exit(1);
 
-// Tokens on Polygon
-const LINK = "0x53E0bca35eC356bDdDdfebbd1Fc0Fd03FaBad39";
-const USDC = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174";
-
-// SushiSwap V2 (cpAMM) factory (Polygon)
-const SUSHI_V2_FACTORY = "0xC35DADB65012eC5796536bD9864eD8773aBc74C4";
-
-const ERC20_ABI = ["function decimals() view returns (uint8)"];
-const FACTORY_ABI = ["function getPair(address tokenA, address tokenB) view returns (address)"];
-const PAIR_ABI = [
-  "function token0() view returns (address)",
-  "function token1() view returns (address)",
-  "function getReserves() view returns (uint112 reserve0, uint112 reserve1, uint32)"
-];
-
-function mustEnv() {
-  const miss = [];
-  if (!BOT_TOKEN) miss.push("BOT_TOKEN");
-  if (!CHAT_ID) miss.push("CHAT_ID");
-  if (!RPC_URL) miss.push("RPC_URL");
-  if (miss.length) throw new Error(`Missing env: ${miss.join(", ")}`);
-}
-
+// ===== Telegram (не шлём ошибки в телегу) =====
 async function tgSend(text) {
-  const url = `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`;
-
-  // мягкие ретраи, чтобы не ловить временные 500
-  for (let i = 0; i < 3; i++) {
-    try {
-      await axios.post(url, {
-        chat_id: CHAT_ID,
-        text,
-        disable_web_page_preview: true
-      }, { timeout: 15000 });
-      return;
-    } catch (e) {
-      const status = e?.response?.status;
-      if (i === 2) throw new Error(`Telegram send failed: ${status || ""} ${e.message}`);
-      await new Promise(r => setTimeout(r, 1000 * (i + 1)));
-    }
+  try {
+    await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+      chat_id: CHAT_ID,
+      text,
+      disable_web_page_preview: true
+    }, { timeout: 15000 });
+  } catch (e) {
+    console.log("Telegram send failed:", e?.response?.data ?? e.message);
   }
 }
 
-function fmt(n, d = 4) {
-  if (!Number.isFinite(n)) return "NaN";
-  return n.toFixed(d);
-}
-
-function sha1(s) {
-  return crypto.createHash("sha1").update(s).digest("hex");
-}
-
+// ===== state.json =====
 function loadState() {
   try {
     return JSON.parse(fs.readFileSync("state.json", "utf8"));
   } catch {
-    return { lastAlertAt: 0, lastAlertTextHash: "" };
+    return { lastAlertTs: 0, lastProfit: -999 };
   }
 }
-
 function saveState(st) {
   fs.writeFileSync("state.json", JSON.stringify(st, null, 2));
 }
 
-function links() {
-  return {
-    sushi: `https://www.sushi.com/swap?chainId=${CHAIN_ID}&token0=${LINK}&token1=${USDC}`,
-    odos: `https://app.odos.xyz/swap?chain=polygon&inputCurrency=${LINK}&outputCurrency=${USDC}`
-  };
-}
+// ===== Sushi V2 =====
+const PAIR_ABI = [
+  "function getReserves() view returns (uint112,uint112,uint32)",
+  "function token0() view returns (address)",
+  "function token1() view returns (address)"
+];
+const ERC20_ABI = ["function decimals() view returns (uint8)"];
 
 async function getSushiPrice(provider) {
-  const factory = new ethers.Contract(SUSHI_V2_FACTORY, FACTORY_ABI, provider);
-  const pairAddr = await factory.getPair(LINK, USDC);
-  if (pairAddr === ethers.ZeroAddress) throw new Error("Sushi pair LINK/USDC not found");
+  const pair = new ethers.Contract(SUSHI_PAIR, PAIR_ABI, provider);
+  const [r0, r1] = await pair.getReserves();
+  const t0 = (await pair.token0()).toLowerCase();
+  const t1 = (await pair.token1()).toLowerCase();
 
-  const pair = new ethers.Contract(pairAddr, PAIR_ABI, provider);
-  const [t0, t1] = await Promise.all([pair.token0(), pair.token1()]);
-  const [d0, d1] = await Promise.all([
-    new ethers.Contract(t0, ERC20_ABI, provider).decimals(),
-    new ethers.Contract(t1, ERC20_ABI, provider).decimals()
-  ]);
+  const link = LINK.toLowerCase();
+  const usdc = USDC.toLowerCase();
+  if (!([t0, t1].includes(link) && [t0, t1].includes(usdc))) return null;
 
-  const { reserve0, reserve1 } = await pair.getReserves();
+  const dec0 = await new ethers.Contract(t0, ERC20_ABI, provider).decimals();
+  const dec1 = await new ethers.Contract(t1, ERC20_ABI, provider).decimals();
 
-  const t0L = t0.toLowerCase();
-  const t1L = t1.toLowerCase();
-  const linkL = LINK.toLowerCase();
-  const usdcL = USDC.toLowerCase();
+  const reserve0 = Number(ethers.formatUnits(r0, dec0));
+  const reserve1 = Number(ethers.formatUnits(r1, dec1));
 
-  let rLINK, rUSDC, dLINK, dUSDC;
+  let price;
+  if (t0 === link && t1 === usdc) price = reserve1 / reserve0;
+  else price = reserve0 / reserve1;
 
-  if (t0L === linkL && t1L === usdcL) {
-    rLINK = reserve0; dLINK = d0;
-    rUSDC = reserve1; dUSDC = d1;
-  } else if (t0L === usdcL && t1L === linkL) {
-    rUSDC = reserve0; dUSDC = d0;
-    rLINK = reserve1; dLINK = d1;
-  } else {
-    throw new Error(`Pair token mismatch. token0=${t0} token1=${t1}`);
-  }
-
-  const link = Number(ethers.formatUnits(rLINK, dLINK));
-  const usdc = Number(ethers.formatUnits(rUSDC, dUSDC));
-  const price = usdc / link;
-
-  return price;
+  return price; // USDC per 1 LINK
 }
 
+// ===== Odos quote (если 500 — молча пропуск) =====
 async function getOdosPrice() {
-  // 1 LINK -> USDC quote
-  const amountIn = ethers.parseUnits("1", 18).toString();
-
+  const url = "https://api.odos.xyz/sor/quote/v2";
   const body = {
-    chainId: CHAIN_ID,
-    inputTokens: [{ tokenAddress: LINK, amount: amountIn }],
+    chainId: 137,
+    inputTokens: [{ tokenAddress: LINK, amount: ethers.parseUnits("1", 18).toString() }],
     outputTokens: [{ tokenAddress: USDC, proportion: 1 }],
-    userAddr: ethers.ZeroAddress,
-    slippageLimitPercent: 0.3
+    userAddr: "0x0000000000000000000000000000000000000001",
+    slippageLimitPercent: 0.3,
+    disableRFQs: true
   };
 
-  const headers = ODOS_API_KEY ? { "x-api-key": ODOS_API_KEY } : undefined;
-
-  // Odos иногда отваливается => ретраи
   for (let i = 0; i < 3; i++) {
     try {
-      const r = await axios.post("https://api.odos.xyz/sor/quote/v3", body, { headers, timeout: 20000 });
-      const out = r.data?.outAmounts?.[0] ?? r.data?.outputTokens?.[0]?.amount;
-      if (!out) throw new Error("Odos: no out amount in response");
-      const usdcOut = Number(ethers.formatUnits(BigInt(out), 6));
-      return usdcOut;
+      const res = await axios.post(url, body, { timeout: 15000 });
+      const out = res.data?.outAmounts?.[0];
+      if (!out) return null;
+      return Number(ethers.formatUnits(out, 6));
     } catch (e) {
-      if (i === 2) throw new Error(`Odos failed: ${e?.response?.status || ""} ${e.message}`);
-      await new Promise(r => setTimeout(r, 1000 * (i + 1)));
+      console.log("Odos failed:", e?.response?.status ?? e.message);
+      await new Promise(r => setTimeout(r, 1200 * (i + 1)));
     }
   }
+  return null;
 }
 
-async function main() {
-  mustEnv();
-
+(async () => {
+  const st = loadState();
   const provider = new ethers.JsonRpcProvider(RPC_URL);
 
-  // старт-уведомление — ТОЛЬКО на manual запуск
-  if (RUN_MODE === "manual") {
+  // ✅ старт-сообщение ТОЛЬКО если ты сам нажал Run workflow
+  if (EVENT_NAME === "workflow_dispatch") {
     await tgSend("BOT STARTED ✅");
   }
 
-  const [sushi, odos] = await Promise.all([
-    getSushiPrice(provider),
-    getOdosPrice()
-  ]);
+  const sushi = await getSushiPrice(provider);
+  if (!sushi) return;
 
-  const profitPct = ((odos - sushi) / sushi) * 100;
+  const odos = await getOdosPrice();
+  if (!odos) return;
 
-  // формируем нормальный алерт-текст
-  const L = links();
-  const alertText =
-`🚨 ARBITRAGE
-Profit: ${fmt(profitPct, 2)}%
+  const diffPct = ((odos - sushi) / sushi) * 100;
+  const profit = Math.abs(diffPct);
 
-Sushi: $${fmt(sushi, 4)}
-Odos:  $${fmt(odos, 4)}
-
-Sushi: ${L.sushi}
-Odos:  ${L.odos}`;
-
-  // анти-спам: одинаковый алерт не чаще чем раз в MIN_ALERT_GAP_MIN
-  const st = loadState();
   const now = Date.now();
-  const gapOk = (now - (st.lastAlertAt || 0)) >= MIN_ALERT_GAP_MIN * 60 * 1000;
-  const hash = sha1(alertText);
-  const isNew = hash !== (st.lastAlertTextHash || "");
+  const cooldownMs = COOLDOWN_MINUTES * 60 * 1000;
 
-  if (profitPct >= THRESHOLD_PCT && (gapOk || isNew)) {
-    await tgSend(alertText);
-    st.lastAlertAt = now;
-    st.lastAlertTextHash = hash;
+  const cooldownPassed = (now - (st.lastAlertTs ?? 0)) >= cooldownMs;
+  const changedEnough = Math.abs(profit - (st.lastProfit ?? -999)) >= MIN_CHANGE_PCT;
+
+  if (profit >= PROFIT_THRESHOLD && cooldownPassed && changedEnough) {
+    const dir = diffPct > 0 ? "Buy on Sushi → Sell on Odos" : "Buy on Odos → Sell on Sushi";
+
+    const msg =
+`🚨 ARBITRAGE
+Profit: ${profit.toFixed(2)}%
+Sushi: $${sushi.toFixed(4)}
+Odos:  $${odos.toFixed(4)}
+Dir: ${dir}
+
+Sushi: ${sushiSwapUrl}
+Odos:  ${odosSwapUrl}`;
+
+    await tgSend(msg);
+
+    // ✅ state.json обновляем ТОЛЬКО когда реально был сигнал
+    st.lastAlertTs = now;
+    st.lastProfit = profit;
     saveState(st);
   }
-}
-
-main().catch((e) => {
-  // ошибки НЕ летят в телегу, только в логи Actions
-  console.error("BOT ERROR:", e?.message || e);
-  process.exit(1);
-});
+})();
