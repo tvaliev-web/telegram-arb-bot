@@ -12,10 +12,11 @@ jobs:
   run:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
       - name: Setup Node
-      - uses: actions/setup-node@v4
+        uses: actions/setup-node@v4
         with:
           node-version: 20
 
@@ -27,14 +28,11 @@ jobs:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
           RPC_URL: ${{ secrets.RPC_URL }}
-
-          # signal tuning:
-          MIN_PROFIT_PCT: "1"          # start sending from 1%
-          PROFIT_STEP_PCT: "0.25"      # re-send if profit grows by +0.25%
-          COOLDOWN_SEC: "600"          # normal cooldown
-          BIG_JUMP_BYPASS: "1.0"       # if profit jumps by +1% send even during cooldown
-          MIN_SECONDS_BETWEEN_ANY: "60" # absolute anti-spam
-
+          MIN_PROFIT_PCT: "1"
+          PROFIT_STEP_PCT: "0.25"
+          COOLDOWN_SEC: "600"
+          BIG_JUMP_BYPASS: "1.0"
+          MIN_SECONDS_BETWEEN_ANY: "60"
         run: node bot.js
 
       - name: Commit state.json if changed
